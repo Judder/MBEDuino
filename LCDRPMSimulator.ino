@@ -1,3 +1,10 @@
+/*
+ * LCD RPM Simulator (aka MBEDuino)
+ * v1.0
+ * Alex Judd (alex@skywire.co.uk)
+ * Open Source license - not for commercial distribution without prior permission
+ */
+
 #include <LiquidCrystal.h>
 #include <DFR_Key.h>
 #include <SoftwareSerial.h>
@@ -95,7 +102,7 @@ char line1[15];
 char line2[15];
 
 int characterwidth = 5;
-int charactermax = 15;
+int charactermax = 16;
 
 //ECU setup
 
@@ -108,7 +115,9 @@ char response[32];
 
 // Simluation setup
 
-int potPin = A8;    // select the input pin for the potentiometer
+int rpmPotPin = A8;    // select the input pin for the potentiometer
+int tp1PotPin = A9;
+int tp2PotPin = A10;
 int powerPin = 20;
 int groundPin =  21;
 int ledPin = 13;   // select the pin for the LED
@@ -117,16 +126,18 @@ int val = 0;       // variable to store the value coming from the sensor
 int counter = 0;
 int refresh = 100000;
 
-int rpm = 800;
-int minrpm = 800;
-int maxrpm = 6000;
+int rpm = 0;
+int minrpm = 0;
+int maxrpm = 12000;
 
 int tp1 = 0;
-int mintp1 = 0;
-int maxtp1 = 100;
+int tp1scaled = 0;
+int mintp1 = -12;
+int maxtp1 = 93;
 int tp2 = 0;
-int mintp2 = 0;
-int maxtp2 = 100;
+int tp2scaled = 0;
+int mintp2 = -12;
+int maxtp2 = 93;
 
 int ad1 = 0;
 int minad1 = -100;
@@ -162,7 +173,9 @@ void setup()
   pinMode(ledPin, OUTPUT);  // declare the ledPin as an OUTPUT
   pinMode(powerPin, OUTPUT);
   pinMode(groundPin, OUTPUT);
-  pinMode(potPin, INPUT);
+  pinMode(rpmPotPin, INPUT);
+  pinMode(tp1PotPin, INPUT);
+  pinMode(tp2PotPin, INPUT);
   digitalWrite(powerPin, HIGH);
   digitalWrite(groundPin, LOW);
   
@@ -201,22 +214,15 @@ int getRPM() {
     return rpm;
 }
 
-void screenOne(int rpm) {
-    //if (counter == refresh) {
-    //int rpm = getRPM();
-    
-    if (tpsa < maxtpsa) {
-      tpsa += 0.1;
-    }
-    if (tpsa >= maxtpsa) { tpsa = mintpsa; }
-  
-    lcd.setCursor(0, 0);
-    lcd.println(String(rpm, DEC) + "RPM " + String(tpsa, 1) + "o 2.3m");
-    lcd.setCursor(0, 1);
-    lcd.println("90oC   24.8o 1.7ms");
-    //counter = 0;
-  //}
-  //counter++;
+void screenOne(int rpm, int tp1, int tp2) {
+  String rpmString = String(rpm, DEC);
+  if (rpmString.length() < 4) {
+    rpmString = "0" + rpmString;
+  }
+  lcd.setCursor(0, 0);
+  lcd.println(rpmString + "RPM " + String(tp1, DEC) + "o 2.3m");
+  lcd.setCursor(0, 1);
+  lcd.println("90oC   " + String(tp2, DEC) + "o 1.7ms");
 }
 
 //screenTwo is a rpm only left to right graph
@@ -254,22 +260,50 @@ void screenTwo(int rpm) {
 
 void screenThree(int tp1, int tp2) {
   int band = 0;
+  int maxrange1 = maxtp1 - mintp1;
+  int maxrange2 = maxtp2 - mintp2;
+  int maxbars = charactermax * characterwidth;
+  int tp1bars = int(((float)tp1 / 1024) * maxbars);
+  int tp2bars = int(((float)tp2 / 1024) * maxbars);
+  //Serial.println("tp1bars = " + String(tp1bars, DEC));
+  
   lcd.setCursor(0, 0);
-  while (tp1 > (maxtp1/charactermax)) {
-    lcd.setCursor(band,0);
-    lcd.write(byte(4));
-    tp1 = tp1 - (maxtp1/(charactermax+1));
+  if (tp1bars > 0) {
+    while (tp1bars > characterwidth) {
+      lcd.setCursor(band,0);
+      lcd.write(byte(4));
+      tp1bars = tp1bars - characterwidth;
+      band++;
+    }
+    lcd.setCursor(band, 0);
+    lcd.write(byte(tp1bars-1));
+    band++;
   }
-  lcd.setCursor(band, 0);
-  lcd.write(byte(tp1/(maxtp1/charactermax/5)));
+  while (band <= charactermax) {
+    lcd.setCursor(band, 0);
+    lcd.write(" ");
+    band++;
+  }
+  
   band = 0;
-  while (tp2 > (maxtp2/charactermax)) {
-    lcd.setCursor(band,1);
-    lcd.write(byte(4));
-    tp2 = tp2 - (maxtp2/(charactermax+1));
+  lcd.setCursor(0, 1);
+  if (tp2bars > 0) {
+    while (tp2bars > characterwidth) {
+      lcd.setCursor(band,1);
+      lcd.write(byte(4));
+      tp2bars = tp2bars - characterwidth;
+      band++;
+    }
+    lcd.setCursor(band, 1);
+    lcd.write(byte(tp2bars-1));
+    band++;
   }
-  lcd.setCursor(band, 1);
-  lcd.write(byte(tp2/(maxtp2/charactermax/5)));
+  while (band <= charactermax) {
+    lcd.setCursor(band, 1);
+    lcd.write(" ");
+    band++;
+  }
+  
 }
 
 void loop() 
@@ -284,6 +318,7 @@ void loop()
       }
       case LEFT_KEY :
       {
+          activeScreen--;
           break;
       }
       case RIGHT_KEY :
@@ -292,8 +327,13 @@ void loop()
           break;
       }
       case UP_KEY     :
+      {
+          activeScreen++;
+          break;
+      }
       case DOWN_KEY   :
       {
+          activeScreen--;
           break;
       }
       case SELECT_KEY :
@@ -304,18 +344,23 @@ void loop()
       };
   }
 
-  val = analogRead(potPin);
+  rpm = analogRead(rpmPotPin);
+  rpm = (int)(rpm*((maxrpm-minrpm)/1000))/1.024;
+  tp1 = analogRead(tp1PotPin);
+  tp2 = analogRead(tp2PotPin);
 
   switch (activeScreen) {
     case 1:
-      screenOne((int)(val*6)/1.024);
+      tp1 = (int)(tp1*((maxtp1-mintp1)/100))/10.24;
+      tp2 = (int)(tp2*((maxtp2-mintp2)/100))/10.24;
+      screenOne(rpm, tp1, tp2);
       break;
     case 2:
-      //Serial.println(val);
-      //Serial.println((val*6)/1.024);
-      screenTwo((int)(val*6)/1.024);
+      //Serial.println(rpm);
+      screenTwo(rpm);
       break;
     case 3:
+      screenThree(tp1, tp2);
       break;
     case 4:
       break;
