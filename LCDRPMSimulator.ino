@@ -9,6 +9,9 @@
 #include <DFR_Key.h>
 #include <SoftwareSerial.h>
 
+//Whether we are in LIVE or SIMULATION mode
+int live = 0;
+
 //LCD setup
 
 LiquidCrystal lcd(8, 13, 9, 4, 5, 6, 7);
@@ -71,7 +74,7 @@ byte levelL[8] = { 0b00000, 0b00000, 0b00000, 0b00000, 0b11111, 0b11111, 0b11111
  * Max = 0C00
  */
 
-const char* engineSpeedCommand[] = {0xC3,0x7C,0x00};
+//const char* engineSpeedCommand[] = {0xC3,0x7C,0x00};
 int engineSpeed = 0;
 
 /*
@@ -115,9 +118,9 @@ char response[32];
 
 // Simluation setup
 
-int rpmPotPin = A8;    // select the input pin for the potentiometer
-int tp1PotPin = A9;
-int tp2PotPin = A10;
+int rpmPotPin = A3;    // select the input pin for the potentiometer
+int tp1PotPin = A4;
+int tp2PotPin = A5;
 int powerPin = 20;
 int groundPin =  21;
 int ledPin = 13;   // select the pin for the LED
@@ -128,7 +131,7 @@ int refresh = 100000;
 
 int rpm = 0;
 int minrpm = 0;
-int maxrpm = 12000;
+int maxrpm = 7500;
 
 int tp1 = 0;
 int tp1scaled = 0;
@@ -194,8 +197,16 @@ void setup()
   Serial.println("Initialising:"); //debug
   Serial.println("Response:");
   Serial.println(response[0]);
-  mbeECU.write((uint8_t)GET_BATTERY);
+  //mbeECU.write((uint8_t)GET_BATTERY);
   Serial.println(mbeECU.read(), HEX);
+
+  lcd.setCursor(0, 0);
+  lcd.println("Initialisation");
+  lcd.setCursor(0, 1);
+  lcd.println("Complete");
+
+  Serial.println("Should be here");
+  
 }
 
 /*
@@ -344,8 +355,12 @@ void loop()
       };
   }
 
-  rpm = analogRead(rpmPotPin);
-  rpm = (int)(rpm*((maxrpm-minrpm)/1000))/1.024;
+  if (live) {
+    rpm = analogRead(rpmPotPin);
+    rpm = (int)(rpm*((maxrpm-minrpm)/1000))/1.024;
+  } else {
+    rpm = getRPM();
+  }
   tp1 = analogRead(tp1PotPin);
   tp2 = analogRead(tp2PotPin);
 
